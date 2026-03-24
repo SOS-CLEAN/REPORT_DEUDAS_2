@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>CONSULTA DEUDAS SFV</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+<style>
+:root{
+  --azul:#0D47A1;
+  --verde:#2E7D32;
+}
+body{font-family:Arial;background:#f5f7fa;margin:0;padding:15px}
+.card{background:#fff;padding:15px;border-radius:8px;margin-top:10px}
+button{background:var(--azul);color:#fff;border:none;padding:8px 12px;border-radius:5px;cursor:pointer}
+button.secondary{background:var(--verde)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:6px;border-bottom:1px solid #ddd}
+th{background:#e3f2fd}
+.total{font-weight:bold;background:#eaf3ff}
+</style>
+</head>
+
+<body>
+
+<h2>CONSULTA DEUDAS SFV</h2>
+
+<div class="card">
+<input id="searchInput" placeholder="DNI o Código Usuario"/>
+<button id="btnLoad">Cargar índice</button>
+<button id="btnSearch">Buscar</button>
+<button id="btnClear" class="secondary">Limpiar</button>
+</div>
+
+<div id="resultsCard" class="card" style="display:none">
+<div>
+<strong id="countLbl">0</strong> resultados
+<button onclick="exportExcel()">Excel</button>
+<button onclick="exportPDF()" class="secondary">PDF</button>
+</div>
+
+<table id="table">
+<thead></thead>
+<tbody></tbody>
+</table>
+</div>
+
+<script>
+
+let INDEX = {};
+let currentResults = [];
+
+function normalize(k){
+  return k.toLowerCase().replace(/\s+/g,'').replace(/[^a-z0-9ñ]/gi,'');
+}
+
+// 🔹 Cargar índice
+async function loadIndex(){
+  const res = await fetch("index.json");
+  INDEX = await res.json();
+  alert("Índice cargado correctamente");
+}
+
+// 🔹 Buscar
+async function searchTerm(){
+  const q = document.getElementById("searchInput").value.trim();
+  if(!q) return;
+
+  const files = INDEX[q] || [];
+  if(files.length===0){
+    alert("No encontrado");
+    return;
+  }
+
+  let results=[];
+
+  for(const file of files){
+    const res = await fetch(file);
+    const data = await res.json();
+
+    data.forEach(r=>{
+      let dni="",cod="";
+      for(const k in r){
+        const nk=normalize(k);
+        if(nk.includes("dni")) dni=r[k];
+        if(nk.includes("codigousuario")) cod=r[k];
+      }
+      if(dni==q || cod==q){
+        results.push(r);
+      }
+    });
+  }
+
+  currentResults=results;
+  render();
+}
+
+// 🔹 Render
+function render(){
+  const card=document.getElementById("resultsCard");
+  const tbody=document.querySelector("#table tbody");
+  const thead=document.querySelector("#table thead");
+
+  tbody.innerHTML="";
+  thead.innerHTML="";
+
+  if(currentResults.length===0){
+    card.style.display="none";
+    return;
+  }
+
+  card.style.display="block";
+  document.getElementById("countLbl").innerText=currentResults.length;
+
+  const headers=["DNI","UU.NN","CODIGO USUARIO","APELLIDOS Y NOMBRES","PERIODO","N° BOLETA","MONTO","DISTRITO","CENTRO POBLADO","ESTADO"];
+
+  let trh=document.createElement("tr");
+  headers.forEach(h=>{
+    let th=document.createElement("th");
+    th.innerText=h;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+
+  let total=0;
+
+  currentResults.forEach(r=>{
+    let tr=document.createElement("tr");
+
+    headers.forEach(h=>{
+      let td=document.createElement("td");
+      let val="";
+
+      for(const k in r){
+        if(normalize(k).includes(normalize(h))){
+          val=r[k];
+          break;
+        }
+      }
+
+      if(h==="MONTO"){
+        let num=parseFloat(val.toString().replace(/[^0-9.-]+/g,''));
+        if(!isNaN(num)) total+=num;
+      }
+
+      td.innerText=val;
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  let trTotal=document.createElement("tr");
+  trTotal.classList.add("total");
+
+  headers.forEach((h,i)=>{
+    let td=document.createElement("td");
+    if(i===0) td.innerText="TOTAL";
+    if(h==="MONTO") td.innerText="S/ "+total.toFixed(2);
+    trTotal.appendChild(td);
+  });
+
+  tbody.appendChild(trTotal);
+}
+
+// 🔹 Excel PRO
+function exportExcel(){
+  if(!currentResults.length) return alert("Sin datos");
+
+  const headers=["DNI","UU.NN","CODIGO USUARIO","APELLIDOS Y NOMBRES","PERIODO","N° BOLETA","MONTO","DISTRITO","CENTRO POBLADO","ESTADO"];
+  let data=[headers];
+  let total=0;
+
+  currentResults.forEach(r=>{
+    let row=[];
+    headers.forEach(h=>{
+      let val="";
+      for(const k in r){
+        if(normalize(k).includes(normalize(h))){
+          val=r[k];
+          break;
+        }
+      }
+      if(h==="MONTO"){
+        let num=parseFloat(val.toString().replace(/[^0-9.-]+/g,''));
+        if(!isNaN(num)) total+=num;
+      }
+      row.push(val);
+    });
+    data.push(row);
+  });
+
+  data.push(["TOTAL","","","","","","S/ "+total.toFixed(2)]);
+
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Reporte");
+
+  XLSX.writeFile(wb,"reporte_deudas.xlsx");
+}
+
+// 🔹 PDF PRO
+function exportPDF(){
+  if(!currentResults.length) return alert("Sin datos");
+
+  const { jsPDF } = window.jspdf;
+  const doc=new jsPDF("l");
+
+  doc.text("Reporte de Deudas SFV",14,15);
+
+  const headers=[["DNI","UU.NN","CODIGO USUARIO","NOMBRES","PERIODO","BOLETA","MONTO","DISTRITO","CENTRO","ESTADO"]];
+  let rows=[];
+  let total=0;
+
+  currentResults.forEach(r=>{
+    let row=[];
+    headers[0].forEach((h)=>{
+      let val="";
+      for(const k in r){
+        if(normalize(k).includes(normalize(h))){
+          val=r[k];
+          break;
+        }
+      }
+      if(h==="MONTO"){
+        let num=parseFloat(val.toString().replace(/[^0-9.-]+/g,''));
+        if(!isNaN(num)) total+=num;
+      }
+      row.push(val);
+    });
+    rows.push(row);
+  });
+
+  rows.push(["TOTAL","","","","","","S/ "+total.toFixed(2)]);
+
+  doc.autoTable({
+    head:headers,
+    body:rows,
+    startY:20,
+    styles:{fontSize:8}
+  });
+
+  doc.save("reporte.pdf");
+}
+
+// 🔹 Eventos
+document.getElementById("btnLoad").onclick=loadIndex;
+document.getElementById("btnSearch").onclick=searchTerm;
+document.getElementById("btnClear").onclick=()=>{
+  currentResults=[];
+  document.getElementById("searchInput").value="";
+  document.getElementById("resultsCard").style.display="none";
+};
+
+</script>
+
+</body>
+</html>
