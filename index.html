@@ -1,262 +1,120 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>CONSULTA DEUDAS SFV</title>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+<meta charset="UTF-8">
+<title>Consulta FISE</title>
 
 <style>
-:root{
-  --azul:#0D47A1;
-  --verde:#2E7D32;
+body {
+    font-family: Arial;
+    text-align: center;
+    margin-top: 50px;
 }
-body{font-family:Arial;background:#f5f7fa;margin:0;padding:15px}
-.card{background:#fff;padding:15px;border-radius:8px;margin-top:10px}
-button{background:var(--azul);color:#fff;border:none;padding:8px 12px;border-radius:5px;cursor:pointer}
-button.secondary{background:var(--verde)}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:6px;border-bottom:1px solid #ddd}
-th{background:#e3f2fd}
-.total{font-weight:bold;background:#eaf3ff}
-</style>
-</head>
 
+input {
+    padding: 10px;
+    width: 250px;
+    font-size: 16px;
+}
+
+button {
+    padding: 10px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+table {
+    margin: auto;
+    margin-top: 20px;
+    border-collapse: collapse;
+}
+
+th, td {
+    border: 1px solid #ccc;
+    padding: 8px;
+}
+
+#loading {
+    display: none;
+    margin-top: 15px;
+    font-weight: bold;
+}
+</style>
+
+</head>
 <body>
 
-<h2>CONSULTA DEUDAS SFV</h2>
+<h2>Consulta FISE</h2>
 
-<div class="card">
-<input id="searchInput" placeholder="DNI o Código Usuario"/>
-<button id="btnLoad">Cargar índice</button>
-<button id="btnSearch">Buscar</button>
-<button id="btnClear" class="secondary">Limpiar</button>
-</div>
+<input type="text" id="busqueda" placeholder="Ingrese DNI o Código">
+<button onclick="buscar()">Buscar</button>
 
-<div id="resultsCard" class="card" style="display:none">
-<div>
-<strong id="countLbl">0</strong> resultados
-<button onclick="exportExcel()">Excel</button>
-<button onclick="exportPDF()" class="secondary">PDF</button>
-</div>
+<div id="loading">🔍 Buscando...</div>
 
-<table id="table">
-<thead></thead>
-<tbody></tbody>
+<table id="resultado" style="display:none;">
+    <thead>
+        <tr>
+            <th>DNI</th>
+            <th>TIPO DE BENEFICIARIO</th>
+            <th>ESTADO FISE</th>
+            <th>OBSERVACIÓN</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
 </table>
-</div>
 
 <script>
+const TOTAL_ARCHIVOS = 50; // 🔴 AJUSTA según cuantos JSON generes
 
-let INDEX = {};
-let currentResults = [];
+async function buscar() {
+    const valor = document.getElementById("busqueda").value.trim();
+    const tabla = document.getElementById("resultado");
+    const tbody = tabla.querySelector("tbody");
 
-function normalize(k){
-  return k.toLowerCase().replace(/\s+/g,'').replace(/[^a-z0-9ñ]/gi,'');
-}
+    tbody.innerHTML = "";
+    tabla.style.display = "none";
 
-// 🔹 Cargar índice
-async function loadIndex(){
-  const res = await fetch("index.json");
-  INDEX = await res.json();
-  alert("Índice cargado correctamente");
-}
+    if (!valor) return;
 
-// 🔹 Buscar
-async function searchTerm(){
-  const q = document.getElementById("searchInput").value.trim();
-  if(!q) return;
+    document.getElementById("loading").style.display = "block";
 
-  const files = INDEX[q] || [];
-  if(files.length===0){
-    alert("No encontrado");
-    return;
-  }
+    let encontrado = null;
 
-  let results=[];
+    // 🔥 búsqueda secuencial optimizada
+    for (let i = 1; i <= TOTAL_ARCHIVOS; i++) {
+        try {
+            const res = await fetch(`data_${i}.json`);
+            const data = await res.json();
 
-  for(const file of files){
-    const res = await fetch(file);
-    const data = await res.json();
+            encontrado = data.find(r => 
+                r["DNI"] === valor || 
+                r["CODIGO USUARIO"] === valor
+            );
 
-    data.forEach(r=>{
-      let dni="",cod="";
-      for(const k in r){
-        const nk=normalize(k);
-        if(nk.includes("dni")) dni=r[k];
-        if(nk.includes("codigousuario")) cod=r[k];
-      }
-      if(dni==q || cod==q){
-        results.push(r);
-      }
-    });
-  }
+            if (encontrado) break;
 
-  currentResults=results;
-  render();
-}
-
-// 🔹 Render
-function render(){
-  const card=document.getElementById("resultsCard");
-  const tbody=document.querySelector("#table tbody");
-  const thead=document.querySelector("#table thead");
-
-  tbody.innerHTML="";
-  thead.innerHTML="";
-
-  if(currentResults.length===0){
-    card.style.display="none";
-    return;
-  }
-
-  card.style.display="block";
-  document.getElementById("countLbl").innerText=currentResults.length;
-
-  const headers=["DNI","UU.NN","CODIGO USUARIO","APELLIDOS Y NOMBRES","PERIODO","N° BOLETA","MONTO","DISTRITO","CENTRO POBLADO","ESTADO"];
-
-  let trh=document.createElement("tr");
-  headers.forEach(h=>{
-    let th=document.createElement("th");
-    th.innerText=h;
-    trh.appendChild(th);
-  });
-  thead.appendChild(trh);
-
-  let total=0;
-
-  currentResults.forEach(r=>{
-    let tr=document.createElement("tr");
-
-    headers.forEach(h=>{
-      let td=document.createElement("td");
-      let val="";
-
-      for(const k in r){
-        if(normalize(k).includes(normalize(h))){
-          val=r[k];
-          break;
+        } catch (e) {
+            console.warn("Error en archivo:", i);
         }
-      }
+    }
 
-      if(h==="MONTO"){
-        let num=parseFloat(val.toString().replace(/[^0-9.-]+/g,''));
-        if(!isNaN(num)) total+=num;
-      }
+    document.getElementById("loading").style.display = "none";
 
-      td.innerText=val;
-      tr.appendChild(td);
-    });
+    if (encontrado) {
+        tabla.style.display = "table";
 
-    tbody.appendChild(tr);
-  });
-
-  let trTotal=document.createElement("tr");
-  trTotal.classList.add("total");
-
-  headers.forEach((h,i)=>{
-    let td=document.createElement("td");
-    if(i===0) td.innerText="TOTAL";
-    if(h==="MONTO") td.innerText="S/ "+total.toFixed(2);
-    trTotal.appendChild(td);
-  });
-
-  tbody.appendChild(trTotal);
+        tbody.innerHTML = `
+            <tr>
+                <td>${encontrado["DNI"] || ""}</td>
+                <td>${encontrado["TIPO DE BENEFICIARIO"] || ""}</td>
+                <td>${encontrado["ESTADO"] || ""}</td>
+                <td>${encontrado["OBSERVACIÓN"] || ""}</td>
+            </tr>
+        `;
+    } else {
+        alert("No encontrado");
+    }
 }
-
-// 🔹 Excel PRO
-function exportExcel(){
-  if(!currentResults.length) return alert("Sin datos");
-
-  const headers=["DNI","UU.NN","CODIGO USUARIO","APELLIDOS Y NOMBRES","PERIODO","N° BOLETA","MONTO","DISTRITO","CENTRO POBLADO","ESTADO"];
-  let data=[headers];
-  let total=0;
-
-  currentResults.forEach(r=>{
-    let row=[];
-    headers.forEach(h=>{
-      let val="";
-      for(const k in r){
-        if(normalize(k).includes(normalize(h))){
-          val=r[k];
-          break;
-        }
-      }
-      if(h==="MONTO"){
-        let num=parseFloat(val.toString().replace(/[^0-9.-]+/g,''));
-        if(!isNaN(num)) total+=num;
-      }
-      row.push(val);
-    });
-    data.push(row);
-  });
-
-  data.push(["TOTAL","","","","","","S/ "+total.toFixed(2)]);
-
-  const ws=XLSX.utils.aoa_to_sheet(data);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"Reporte");
-
-  XLSX.writeFile(wb,"reporte_deudas.xlsx");
-}
-
-// 🔹 PDF PRO
-function exportPDF(){
-  if(!currentResults.length) return alert("Sin datos");
-
-  const { jsPDF } = window.jspdf;
-  const doc=new jsPDF("l");
-
-  doc.text("Reporte de Deudas SFV",14,15);
-
-  const headers=[["DNI","UU.NN","CODIGO USUARIO","NOMBRES","PERIODO","BOLETA","MONTO","DISTRITO","CENTRO","ESTADO"]];
-  let rows=[];
-  let total=0;
-
-  currentResults.forEach(r=>{
-    let row=[];
-    headers[0].forEach((h)=>{
-      let val="";
-      for(const k in r){
-        if(normalize(k).includes(normalize(h))){
-          val=r[k];
-          break;
-        }
-      }
-      if(h==="MONTO"){
-        let num=parseFloat(val.toString().replace(/[^0-9.-]+/g,''));
-        if(!isNaN(num)) total+=num;
-      }
-      row.push(val);
-    });
-    rows.push(row);
-  });
-
-  rows.push(["TOTAL","","","","","","S/ "+total.toFixed(2)]);
-
-  doc.autoTable({
-    head:headers,
-    body:rows,
-    startY:20,
-    styles:{fontSize:8}
-  });
-
-  doc.save("reporte.pdf");
-}
-
-// 🔹 Eventos
-document.getElementById("btnLoad").onclick=loadIndex;
-document.getElementById("btnSearch").onclick=searchTerm;
-document.getElementById("btnClear").onclick=()=>{
-  currentResults=[];
-  document.getElementById("searchInput").value="";
-  document.getElementById("resultsCard").style.display="none";
-};
-
 </script>
 
 </body>
